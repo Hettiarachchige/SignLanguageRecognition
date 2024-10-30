@@ -1,0 +1,102 @@
+/* src/components/LoginPage.css */
+
+/* Full-page background with flexbox alignment */
+.login-container {
+    background-color: #f0f4f8;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    padding: 20px;
+    position: relative;
+    box-shadow: inset 0 0 50px rgba(0, 0, 0, 0.1);
+  }
+  
+  /* Project name styling */
+  .project-name {
+    font-size: 32px;
+    font-weight: bold;
+    color: #333;
+    margin-bottom: 20px;
+  }
+  
+  /* Form styling for better alignment */
+  .login-form {
+    width: 100%;
+    max-width: 320px;
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+  }
+  
+  /* Input fields styling */
+  .input-field {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    font-size: 16px;
+    box-sizing: border-box;
+  }
+  
+  /* Button container to align buttons horizontally */
+  .button-container {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 10px;
+  }
+  
+  /* Login button styling */
+  .login-button {
+    background-color: #4caf50;
+    color: white;
+    padding: 10px 20px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 16px;
+    transition: background-color 0.3s ease;
+    flex: 1;
+    margin-right: 5px;
+  }
+  
+  /* Sign-in button styling */
+  .sign-in-button {
+    background-color: #2196f3;
+    color: white;
+    padding: 10px 20px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 16px;
+    transition: background-color 0.3s ease;
+    flex: 1;
+  }
+  
+  /* Hover effects for buttons */
+  .login-button:hover {
+    background-color: #45a049;
+  }
+  
+  .sign-in-button:hover {
+    background-color: #1e88e5;
+  }
+  
+  /* Error message styling */
+  .error-text {
+    color: red;
+    margin-top: 10px;
+    font-size: 14px;
+  }
+  
+  /* Author name at bottom-left */
+  .author-name {
+    position: absolute;
+    bottom: 10px;
+    left: 10px;
+    font-size: 14px;
+    color: #666;
+  }
+  

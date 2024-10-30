@@ -1,0 +1,52 @@
+/* src/components/DisplayText.css */
+
+.display-text-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 15px;
+    width: 100%;
+    
+  }
+  
+  .recognized-textarea {
+    width: 80%;
+    max-width: 400px;
+    height: 150px;
+    padding: 10px;
+    font-size: 16px;
+    border: 2px solid #ddd;
+    border-radius: 5px;
+    resize: none;
+    background-color: #f9f9f9;
+    transition: border-color 0.3s;
+  }
+  
+  .recognized-textarea:focus {
+    border-color: #4caf50;
+    outline: none;
+  }
+  
+  .recognize-button {
+    width: 80%;
+    max-width: 400px;
+    padding: 12px 20px;
+    font-size: 18px;
+    font-weight: bold;
+    color: white;
+    background-color: #4caf50;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background-color 0.3s, transform 0.2s;
+  }
+  
+  .recognize-button:hover {
+    background-color: #45a049;
+    transform: scale(1.05);
+  }
+  
+  .recognize-button:active {
+    transform: scale(0.98);
+  }
+  

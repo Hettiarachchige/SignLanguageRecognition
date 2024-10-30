@@ -1,0 +1,73 @@
+/* src/components/SignUpPage.css */
+
+/* Full-page background with flexbox alignment */
+.signup-container {
+    background-color: #f9f9f9;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+    text-align: center;
+    position: relative;
+    box-shadow: inset 0 0 50px rgba(0, 0, 0, 0.1);
+  }
+  
+  /* Project name styling */
+  .project-name {
+    font-size: 32px;
+    font-weight: bold;
+    margin-bottom: 20px;
+    color: #333;
+  }
+  
+  /* Form styling for better alignment */
+  .signup-form {
+    width: 100%;
+    max-width: 400px;
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+  }
+  
+  /* Input and textarea styling */
+  .input-field {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    font-size: 16px;
+    box-sizing: border-box;
+  }
+  
+  /* Sign-up button styling */
+  .signup-button {
+    background-color: #4caf50;
+    color: white;
+    padding: 12px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 18px;
+    transition: background-color 0.3s ease;
+  }
+  
+  /* Hover effect for sign-up button */
+  .signup-button:hover {
+    background-color: #45a049;
+  }
+  
+  /* Error and success message styling */
+  .error-text {
+    color: red;
+    margin-top: 10px;
+    font-size: 14px;
+  }
+  
+  .success-text {
+    color: green;
+    margin-top: 10px;
+    font-size: 14px;
+  }
+  

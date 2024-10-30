@@ -1,0 +1,1155 @@
+/// src/VideoCapture.js
+import React, { useState, useEffect, useRef } from 'react';
+import axios from 'axios';
+
+const VideoCapture = () => {
+  const [gesture, setGesture] = useState('');
+  const [sinhala, setSinhala] = useState('');
+  const [error, setError] = useState(null);
+  const [videoStream, setVideoStream] = useState(null);
+  const captureInterval = useRef(null);
+  const videoRef = useRef(null); // Ref for the video element
+
+  useEffect(() => {
+    // Get webcam stream when component mounts
+    navigator.mediaDevices
+      .getUserMedia({ video: true })
+      .then((stream) => {
+        setVideoStream(stream);
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream; // Set video source
+        }
+        // Start capturing frames every 2 seconds
+        captureInterval.current = setInterval(handleCapture, 2000);
+      })
+      .catch((err) => setError('Failed to access camera.'));
+
+    // Cleanup: Stop the interval and release the camera when component unmounts
+    return () => {
+      clearInterval(captureInterval.current);
+      if (videoStream) {
+        videoStream.getTracks().forEach((track) => track.stop());
+      }
+    };
+  }, []);
+
+  const handleCapture = async () => {
+    try {
+      const video = videoRef.current;
+      if (!video) return;
+  
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d');
+  
+      // Set canvas size to match video dimensions
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+  
+      // Clear the canvas and draw the current video frame
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+  
+      // Convert canvas image to Base64
+      const imageData = canvas.toDataURL('image/jpeg', 0.9);
+      const base64Image = imageData.split(',')[1]; // Remove data:URL prefix
+  
+      // Send the image to the backend
+      const response = await axios.post('http://localhost:5000/api/recognize', {
+        image: base64Image,
+      });
+  
+      setGesture(response.data.gesture); // Update gesture state
+      setSinhala(response.data.sinhala);
+      console.log("Response: ", response.data); // Log the full responsex
+    } catch (err) {
+      if (err.response) {
+        console.error("Backend Error: ", err.response.data); // Log backend error response
+      } else {
+        console.error("Request Error: ", err.message);
+      }
+      setError('Recognition failed. Please try again.');
+    }
+  };
+  
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+      <video
+        ref={videoRef}
+        autoPlay
+        onLoadedMetadata={() => {
+          // Start playing the video once metadata is loaded
+          videoRef.current.play();
+        }}
+        style={{ width: '100%', borderRadius: '10px', marginBottom: '20px' }}
+      />
+      <div>
+        {gesture ? <h3>Recognized Gesture: {gesture}</h3> : <p>Waiting for recognition...</p>}
+        {error && <p style={{ color: 'red' }}>{error}</p>}
+      </div>
+      <div className="display-text-container">
+      
+      {sinhala ? <h1>Recognized Gesture: {sinhala}</h1> : <h1>Waiting for recognition...</h1>}
+
+      <textarea readOnly
+        className="recognized-textarea"
+        rows="10"
+        cols="30"
+        placeholder="The recognized text will appear here..."
+      ></textarea>
+      <button className="recognize-button">Recognize Gesture</button>
+    </div>
+    </div>
+    
+  );
+};
+
+export default VideoCapture;
+
+
+////////////////////////////////////////////////////////
+app.py
+# app.py
+
+import base64
+from flask import Flask, request, jsonify
+import cv2  # type: ignore
+import numpy as np  # type: ignore
+import tensorflow as tf  # type: ignore
+import mediapipe as mp  # type: ignore
+from flask_cors import CORS
+
+# Initialize Flask app
+app = Flask(__name__)
+CORS(app)
+
+# Load the gesture model
+model = tf.keras.models.load_model('gesture_model.keras')
+
+# Class names and Sinhala text mappings
+class_names = ['hello', 'one', 'welcome']
+sinhala_mapping = {
+    'hello': 'ආයුබෝවන්',
+    'one': 'එක',
+    'welcome': 'සාදරයෙන් පිළිගනිමු'
+}
+
+# MediaPipe setup for hand detection
+mp_hands = mp.solutions.hands
+hands = mp_hands.Hands(static_image_mode=False, max_num_hands=2, min_detection_confidence=0.2)
+
+@app.after_request
+def add_cors_headers(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+    return response
+
+@app.route('/api/recognize', methods=['POST'])
+def predict():
+    # Get image data from request body (assuming JSON format)
+    data = request.get_json()
+    image_data = data.get('image')
+
+    if not image_data:
+      print("not json")
+      return jsonify({'error': 'Missing image data'}), 400
+
+    decoded_data = base64.b64decode(image_data)
+
+    np_img = np.frombuffer(decoded_data, np.uint8)
+
+    frame = cv2.imdecode(np_img, cv2.IMREAD_COLOR)
+    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+    result = hands.process(rgb_frame)
+    # print(f"Hand landmarks: {result.multi_hand_landmarks}")  # Log the result
+    
+    if result.multi_hand_landmarks:
+        for hand_landmarks in result.multi_hand_landmarks:
+            # Extract hand region
+            h, w, _ = frame.shape
+            x_min = int(min([lm.x for lm in hand_landmarks.landmark]) * w)
+            y_min = int(min([lm.y for lm in hand_landmarks.landmark]) * h)
+            x_max = int(max([lm.x for lm in hand_landmarks.landmark]) * w)
+            y_max = int(max([lm.y for lm in hand_landmarks.landmark]) * h)
+
+            hand_region = frame[y_min:y_max, x_min:x_max]
+            if hand_region.size > 0:
+                hand_resized = cv2.resize(hand_region, (64, 64))
+                hand_normalized = np.expand_dims(hand_resized / 255.0, axis=0)
+
+                predictions = model.predict(hand_normalized)
+                predicted_class = np.argmax(predictions[0])
+                confidence = predictions[0][predicted_class]
+
+                if confidence >= 0.5:
+                    gesture = class_names[predicted_class]
+                    sinhala_text = sinhala_mapping.get(gesture, '')
+                    
+                    print("gesture: " + gesture)
+
+                    # Add CORS headers for any origin
+                    response = jsonify({'gesture': gesture, 'sinhala': sinhala_text})
+                    response.headers['Access-Control-Allow-Origin'] = '*'
+
+                    return response
+
+    return jsonify({'error': 'No valid gesture detected'}), 400
+
+if __name__ == '__main__':
+    app.run(debug=True)
+////////////////////////////////////////////////////////////////////////////////////////
+
+capture_image.py
+
+import cv2  # type: ignore
+import mediapipe as mp  # type: ignore
+import os
+import time
+
+# Define paths and parameters
+GESTURE_NAME = input("Enter gesture name: ")
+SAVE_PATH = f"gestures/{GESTURE_NAME}"
+os.makedirs(SAVE_PATH, exist_ok=True)
+
+# Initialize MediaPipe Holistic and camera
+mp_holistic = mp.solutions.holistic
+mp_drawing = mp.solutions.drawing_utils
+
+holistic = mp_holistic.Holistic(
+    static_image_mode=False,
+    model_complexity=1,
+    min_detection_confidence=0.5,
+    min_tracking_confidence=0.5,
+)
+
+cap = cv2.VideoCapture(0)
+if not cap.isOpened():
+    print("Error: Camera not detected.")
+    exit()
+
+# Set the number of images to capture
+TOTAL_IMAGES = 1000
+count = 0
+
+print(f"Capturing {TOTAL_IMAGES} images for gesture '{GESTURE_NAME}'. Press 'q' to quit at any time.")
+
+while count < TOTAL_IMAGES:
+    ret, frame = cap.read()
+    if not ret:
+        print("Failed to capture image.")
+        break
+
+    # Convert the frame to RGB for MediaPipe processing
+    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    results = holistic.process(frame_rgb)
+
+    # Draw landmarks on the frame
+    if results.pose_landmarks:
+        mp_drawing.draw_landmarks(
+            frame, results.pose_landmarks, mp_holistic.POSE_CONNECTIONS
+        )
+    #if results.face_landmarks:
+       # mp_drawing.draw_landmarks(
+       #     frame, results.face_landmarks, mp_holistic.FACEMESH_TESSELATION
+        #)
+    if results.left_hand_landmarks:
+        mp_drawing.draw_landmarks(
+            frame, results.left_hand_landmarks, mp_holistic.HAND_CONNECTIONS
+        )
+    if results.right_hand_landmarks:
+        mp_drawing.draw_landmarks(
+            frame, results.right_hand_landmarks, mp_holistic.HAND_CONNECTIONS
+        )
+
+    # Show the frame with landmarks
+    cv2.imshow("Capture Gesture with Holistic Landmarks", frame)
+
+    # Save the image if any landmarks are detected
+    if (
+        results.pose_landmarks
+        #or results.face_landmarks
+        or results.left_hand_landmarks
+        or results.right_hand_landmarks
+    ):
+        img_name = f"{SAVE_PATH}/{GESTURE_NAME}_{count}.jpg"
+        cv2.imwrite(img_name, frame)
+        print(f"Saved: {img_name}")
+        count += 1
+
+    # Wait a moment before capturing the next image
+    time.sleep(0.1)  # Adjust this to control capture speed
+
+    # Exit if 'q' is pressed
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
+print(f"Captured {count} images for gesture '{GESTURE_NAME}'.")
+//////////////////////////////////////////////////////////////////////////////////////////////////
+train_model.py
+
+import os
+import numpy as np  # type: ignore
+import tensorflow as tf  # type: ignore
+from tensorflow.keras.preprocessing.image import ImageDataGenerator  # type: ignore
+
+# Directory paths
+base_dir = 'gestures'
+
+# Create an image data generator with augmentation
+train_datagen = ImageDataGenerator(
+    rescale=1./255,
+    validation_split=0.2,  # Use 20% of data for validation
+    rotation_range=20,      # Data augmentation: Random rotation
+    width_shift_range=0.2,  # Horizontal shift
+    height_shift_range=0.2, # Vertical shift
+    zoom_range=0.2,         # Random zoom
+    horizontal_flip=True    # Randomly flip images
+)
+
+# Load images from the directory (training set)
+train_generator = train_datagen.flow_from_directory(
+    base_dir,
+    target_size=(64, 64),  # Resize images to 64x64
+    batch_size=32,
+    class_mode='categorical',
+    subset='training'
+)
+
+# Load images from the directory (validation set)
+validation_generator = train_datagen.flow_from_directory(
+    base_dir,
+    target_size=(64, 64),
+    batch_size=32,
+    class_mode='categorical',
+    subset='validation'
+)
+
+# Build the CNN model
+model = tf.keras.models.Sequential([
+    tf.keras.layers.Conv2D(32, (3, 3), activation='relu', input_shape=(64, 64, 3)),
+    tf.keras.layers.MaxPooling2D(pool_size=(2, 2)),
+    tf.keras.layers.Conv2D(64, (3, 3), activation='relu'),
+    tf.keras.layers.MaxPooling2D(pool_size=(2, 2)),
+    tf.keras.layers.Conv2D(128, (3, 3), activation='relu'),
+    tf.keras.layers.MaxPooling2D(pool_size=(2, 2)),
+    tf.keras.layers.Flatten(),
+    tf.keras.layers.Dense(128, activation='relu'),
+    tf.keras.layers.Dropout(0.5),  # Regularization to prevent overfitting
+    tf.keras.layers.Dense(len(train_generator.class_indices), activation='softmax')  # Output layer
+])
+
+# Compile the model
+model.compile(
+    optimizer='adam',
+    loss='categorical_crossentropy',
+    metrics=['accuracy']
+)
+
+# Train the model
+model.fit(
+    train_generator,
+    validation_data=validation_generator,
+    epochs=20  # Adjust the number of epochs based on training needs
+)
+
+# Save the model
+model.save('gesture_model.keras')
+
+print("Model training completed and saved successfully.")
+//////////////////////////////////////////////////////////////////////////////////
+ges.py
+
+import cv2  # type: ignore
+import numpy as np  # type: ignore
+import tensorflow as tf  # type: ignore
+import mediapipe as mp  # type: ignore
+from PIL import Image, ImageDraw, ImageFont  # type: ignore
+
+# Load the gesture model
+model = tf.keras.models.load_model('gesture_model.keras')
+
+# Class names and Sinhala text mappings
+class_names = ['hello', 'one', 'welcome']
+sinhala_mapping = {
+    'hello': 'ආයුබෝවන්',
+    'one': 'එක',
+    'welcome': 'සාදරයෙන් පිළිගනිමු'
+}
+
+# MediaPipe setup for hand detection
+mp_hands = mp.solutions.hands
+hands = mp_hands.Hands(static_image_mode=False, max_num_hands=2, min_detection_confidence=0.7)
+mp_drawing = mp.solutions.drawing_utils
+
+# Load Sinhala font using Pillow
+font_path = "NotoSansSinhala-VariableFont_wdth,wght.ttf"
+font = ImageFont.truetype(font_path, 40)
+
+# Initialize camera
+cap = cv2.VideoCapture(0)
+CONFIDENCE_THRESHOLD = 0.7
+
+try:
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            print("Failed to grab frame")
+            break
+
+        # Convert the frame to RGB for MediaPipe processing
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        result = hands.process(rgb_frame)
+
+        # Check if hand landmarks are detected
+        if result.multi_hand_landmarks:
+            for hand_landmarks in result.multi_hand_landmarks:
+                # Draw hand landmarks on the frame
+                mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+
+                # Extract hand region as input for the model
+                h, w, _ = frame.shape
+                x_min = int(min([lm.x for lm in hand_landmarks.landmark]) * w)
+                y_min = int(min([lm.y for lm in hand_landmarks.landmark]) * h)
+                x_max = int(max([lm.x for lm in hand_landmarks.landmark]) * w)
+                y_max = int(max([lm.y for lm in hand_landmarks.landmark]) * h)
+
+                # Crop the hand region from the frame
+                hand_region = frame[y_min:y_max, x_min:x_max]
+                if hand_region.size > 0:
+                    # Preprocess the hand region for the model
+                    hand_resized = cv2.resize(hand_region, (64, 64))
+                    hand_normalized = np.expand_dims(hand_resized / 255.0, axis=0)
+
+                    # Get predictions from the model
+                    predictions = model.predict(hand_normalized)
+                    if predictions.size == 0:
+                        print("No predictions returened.")
+                    
+                    else:
+                         predicted_class = np.argmax(predictions[0])
+                    if predicted_class < len(class_names):
+                       confidence = predictions[0][predicted_class]
+
+                    # Only display gesture name if confidence exceeds the threshold
+                    sinhala_text = sinhala_mapping.get(class_names[predicted_class], '') if confidence >= CONFIDENCE_THRESHOLD else ''
+                    if confidence >= CONFIDENCE_THRESHOLD:
+                    # Only render text if there are detected landmarks
+                     if sinhala_text:
+                        # Render Sinhala text using Pillow
+                        pil_img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                        draw = ImageDraw.Draw(pil_img)
+                        draw.text((50, 50), sinhala_text, font=font, fill=(0, 255, 0))
+
+                        # Convert back to OpenCV format
+                        frame = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+
+        # Show the frame
+        cv2.imshow('Sign Language Recognition', frame)
+
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+except Exception as e:
+    print("Error:", e)
+finally:
+    cap.release()
+    cv2.destroyAllWindows()
+
+//////////////////////////////////////////////////
+FrontEnd
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+Display_text.js
+
+// src/components/DisplayText.js
+import React from 'react';
+import './DisplayText.css'; // Import CSS
+
+const DisplayText = () => {
+  return (
+    <div className="display-text-container">
+      <h1>Recognized Text</h1>
+      <textarea readOnly
+        className="recognized-textarea"
+        rows="10"
+        cols="30"
+        placeholder="The recognized text will appear here..."
+      ></textarea>
+      <button className="recognize-button">Recognize Gesture</button>
+    </div>
+  );
+};
+
+export default DisplayText;
+/////////////////////////////////////////////////////////
+MainPage.js
+
+// src/MainPage.js
+import React from 'react';
+import VideoCapture from './VedioCapture';
+import DisplayText from './DisplayText';
+import './MainPage.css'; // Import styling
+
+const MainPage = () => {
+  return (
+    <div className="main-container">
+      <div className="video-container">
+        <VideoCapture />
+      </div>
+      {/* <div className="text-container">
+        <DisplayText />
+      </div> */}
+    </div>
+  );
+};
+
+export default MainPage;
+///////////////////////////////////////////////////////////////////////////
+App.css
+
+.App {
+  text-align: center;
+}
+
+.App-logo {
+  height: 40vmin;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .App-logo {
+    animation: App-logo-spin infinite 20s linear;
+  }
+}
+
+.App-header {
+  background-color: #282c34;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(10px + 2vmin);
+  color: white;
+}
+
+.App-link {
+  color: #17bac0;
+}
+
+@keyframes App-logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+////////////////////////////////////////////////////////////////////////////////
+App.js
+
+// src/App.js
+import React from 'react';
+import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
+import LoginPage from './LoginPage';
+import SignUpPage from './SignUpPage';
+import MainPage from './MainPage'; // Import MainPage
+
+function App() {
+  return (
+    <Router>
+      <Routes>
+        <Route path="/" element={<LoginPage />} />
+        <Route path="/signup" element={<SignUpPage />} />
+        <Route path="/video" element={<MainPage />} /> {/* Route to MainPage */}
+      </Routes>
+    </Router>
+  );
+}
+
+export default App;
+////////////////////////////////////////////////////////////////////////
+
+App.test.js
+
+import { render, screen } from '@testing-library/react';
+import App from './App';
+
+test('renders learn react link', () => {
+  render(<App />);
+  const linkElement = screen.getByText(/learn react/i);
+  expect(linkElement).toBeInTheDocument();
+});
+///////////////////////////////////////////////////////////////////
+DisplayText.css
+
+/* src/components/DisplayText.css */
+
+.display-text-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 15px;
+    width: 100%;
+    
+  }
+  
+  .recognized-textarea {
+    width: 80%;
+    max-width: 400px;
+    height: 150px;
+    padding: 10px;
+    font-size: 16px;
+    border: 2px solid #ddd;
+    border-radius: 5px;
+    resize: none;
+    background-color: #f9f9f9;
+    transition: border-color 0.3s;
+  }
+  
+  .recognized-textarea:focus {
+    border-color: #4caf50;
+    outline: none;
+  }
+  
+  .recognize-button {
+    width: 80%;
+    max-width: 400px;
+    padding: 12px 20px;
+    font-size: 18px;
+    font-weight: bold;
+    color: white;
+    background-color: #4caf50;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background-color 0.3s, transform 0.2s;
+  }
+  
+  .recognize-button:hover {
+    background-color: #45a049;
+    transform: scale(1.05);
+  }
+  
+  .recognize-button:active {
+    transform: scale(0.98);
+  }
+  ////////////////////////////////////////////////////////////////////////
+index.css
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+    monospace;
+}
+///////////////////////////////////////////////////////////////////////////////
+index.js
+
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import './index.css';
+import App from './App';
+import reportWebVitals from './reportWebVitals';
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);
+
+// If you want to start measuring performance in your app, pass a function
+// to log results (for example: reportWebVitals(console.log))
+// or send to an analytics endpoint. Learn more: https://bit.ly/CRA-vitals
+reportWebVitals();
+/////////////////////////////////////////////////////////////////////////////////
+
+loginPage.css
+
+/* src/components/LoginPage.css */
+
+/* Full-page background with flexbox alignment */
+.login-container {
+    background-color: #f0f4f8;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    padding: 20px;
+    position: relative;
+    box-shadow: inset 0 0 50px rgba(0, 0, 0, 0.1);
+  }
+  
+  /* Project name styling */
+  .project-name {
+    font-size: 32px;
+    font-weight: bold;
+    color: #333;
+    margin-bottom: 20px;
+  }
+  
+  /* Form styling for better alignment */
+  .login-form {
+    width: 100%;
+    max-width: 320px;
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+  }
+  
+  /* Input fields styling */
+  .input-field {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    font-size: 16px;
+    box-sizing: border-box;
+  }
+  
+  /* Button container to align buttons horizontally */
+  .button-container {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 10px;
+  }
+  
+  /* Login button styling */
+  .login-button {
+    background-color: #4caf50;
+    color: white;
+    padding: 10px 20px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 16px;
+    transition: background-color 0.3s ease;
+    flex: 1;
+    margin-right: 5px;
+  }
+  
+  /* Sign-in button styling */
+  .sign-in-button {
+    background-color: #2196f3;
+    color: white;
+    padding: 10px 20px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 16px;
+    transition: background-color 0.3s ease;
+    flex: 1;
+  }
+  
+  /* Hover effects for buttons */
+  .login-button:hover {
+    background-color: #45a049;
+  }
+  
+  .sign-in-button:hover {
+    background-color: #1e88e5;
+  }
+  
+  /* Error message styling */
+  .error-text {
+    color: red;
+    margin-top: 10px;
+    font-size: 14px;
+  }
+  
+  /* Author name at bottom-left */
+  .author-name {
+    position: absolute;
+    bottom: 10px;
+    left: 10px;
+    font-size: 14px;
+    color: #666;
+  }
+  ///////////////////////////////////////////////////////////////////////////////////
+
+LoginPAge.js
+
+// src/components/LoginPage.js
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom'; // Import useNavigate
+import './LoginPage.css'; // Import CSS
+
+const LoginPage = () => {
+  const [credentials, setCredentials] = useState({
+    username: '',
+    password: '',
+  });
+
+  const [error, setError] = useState('');
+  const navigate = useNavigate(); // Initialize navigate
+
+  const handleChange = (e) => {
+    const { name, value } = e.target;
+    setCredentials({ ...credentials, [name]: value });
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+
+    // Simulate login validation
+    const { username, password } = credentials;
+
+    // Replace this logic with actual validation
+    if (username && password) {
+      // Assuming successful login
+      navigate('/video'); // Navigate to the VideoCapture page
+    } else {
+      setError('Please enter both username and password');
+    }
+  };
+
+  return (
+    <div className="login-container">
+      <h1 className="project-name">Login to Your Account</h1>
+
+      <form onSubmit={handleSubmit} className="login-form">
+        <input
+          type="text"
+          name="username"
+          placeholder="Username"
+          value={credentials.username}
+          onChange={handleChange}
+          required
+          className="input-field"
+        />
+
+        <input
+          type="password"
+          name="password"
+          placeholder="Password"
+          value={credentials.password}
+          onChange={handleChange}
+          required
+          className="input-field"
+        />
+
+        <button type="submit" className="login-button">
+          Login
+        </button>
+      </form>
+
+      {error && <p className="error-text">{error}</p>}
+      <p>Don't have an account? <a href="/signup">Sign Up</a></p>
+    </div>
+  );
+};
+
+export default LoginPage;
+///////////////////////////////////////////////////////////////////////////////
+
+MAinPAge.css
+
+/* src/MainPage.css */
+
+.main-container {
+  display: flex;
+  height: 100vh;
+  background-color: #f5f5f5;
+}
+
+.video-container {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background-color: white;
+  padding: 20px;
+  border-right: 1px solid #ddd;
+}
+
+.text-container {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background-color: #fafafa;
+  padding: 20px;
+}
+///////////////////////////////////////////////////////////////////
+reportWebVitals.js
+
+const reportWebVitals = onPerfEntry => {
+  if (onPerfEntry && onPerfEntry instanceof Function) {
+    import('web-vitals').then(({ getCLS, getFID, getFCP, getLCP, getTTFB }) => {
+      getCLS(onPerfEntry);
+      getFID(onPerfEntry);
+      getFCP(onPerfEntry);
+      getLCP(onPerfEntry);
+      getTTFB(onPerfEntry);
+    });
+  }
+};
+
+export default reportWebVitals;
+/////////////////////////////////////////////////////////////////////////
+
+setupTest.js
+
+// jest-dom adds custom jest matchers for asserting on DOM nodes.
+// allows you to do things like:
+// expect(element).toHaveTextContent(/react/i)
+// learn more: https://github.com/testing-library/jest-dom
+import '@testing-library/jest-dom';
+//////////////////////////////////////////////////////////////////////////////////////////
+
+SignUpPAge.css
+
+/* src/components/SignUpPage.css */
+
+/* Full-page background with flexbox alignment */
+.signup-container {
+    background-color: #f9f9f9;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+    text-align: center;
+    position: relative;
+    box-shadow: inset 0 0 50px rgba(0, 0, 0, 0.1);
+  }
+  
+  /* Project name styling */
+  .project-name {
+    font-size: 32px;
+    font-weight: bold;
+    margin-bottom: 20px;
+    color: #333;
+  }
+  
+  /* Form styling for better alignment */
+  .signup-form {
+    width: 100%;
+    max-width: 400px;
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+  }
+  
+  /* Input and textarea styling */
+  .input-field {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    font-size: 16px;
+    box-sizing: border-box;
+  }
+  
+  /* Sign-up button styling */
+  .signup-button {
+    background-color: #4caf50;
+    color: white;
+    padding: 12px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 18px;
+    transition: background-color 0.3s ease;
+  }
+  
+  /* Hover effect for sign-up button */
+  .signup-button:hover {
+    background-color: #45a049;
+  }
+  
+  /* Error and success message styling */
+  .error-text {
+    color: red;
+    margin-top: 10px;
+    font-size: 14px;
+  }
+  
+  .success-text {
+    color: green;
+    margin-top: 10px;
+    font-size: 14px;
+  }
+  //////////////////////////////////////////////////////////////////////////////
+
+SignUpPage.js
+
+// src/components/SignUpPage.js
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom'; // Import useNavigate
+import './SignUpPage.css'; // Import CSS
+
+const SignUpPage = () => {
+  const [formData, setFormData] = useState({
+    fullName: '',
+    email: '',
+    password: '',
+    confirmPassword: '',
+    gender: '',
+    phone: '',
+    address: '',
+  });
+
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const navigate = useNavigate(); // Initialize navigate
+
+  const handleChange = (e) => {
+    const { name, value } = e.target;
+    setFormData({ ...formData, [name]: value });
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    const { password, confirmPassword } = formData;
+
+    if (password !== confirmPassword) {
+      setError('Passwords do not match');
+      return;
+    }
+
+    // Simulating successful sign-up
+    setTimeout(() => {
+      setSuccess('Account created successfully!');
+      setError('');
+      navigate('/video'); // Navigate to the VideoCapture page
+    }, 1000); // Simulate a delay like an API call
+  };
+
+  return (
+    <div className="signup-container">
+      <h1 className="project-name">Create Your Account</h1>
+
+      <form onSubmit={handleSubmit} className="signup-form">
+        <input
+          type="text"
+          name="fullName"
+          placeholder="Full Name"
+          value={formData.fullName}
+          onChange={handleChange}
+          required
+          className="input-field"
+        />
+
+        <input
+          type="email"
+          name="email"
+          placeholder="Email"
+          value={formData.email}
+          onChange={handleChange}
+          required
+          className="input-field"
+        />
+
+        <input
+          type="password"
+          name="password"
+          placeholder="Create Password"
+          value={formData.password}
+          onChange={handleChange}
+          required
+          className="input-field"
+        />
+
+        <input
+          type="password"
+          name="confirmPassword"
+          placeholder="Confirm Password"
+          value={formData.confirmPassword}
+          onChange={handleChange}
+          required
+          className="input-field"
+        />
+
+        <select
+          name="gender"
+          value={formData.gender}
+          onChange={handleChange}
+          required
+          className="input-field"
+        >
+          <option value="">Select Gender</option>
+          <option value="male">Male</option>
+          <option value="female">Female</option>
+          <option value="other">Other</option>
+        </select>
+
+        <input
+          type="text"
+          name="phone"
+          placeholder="Phone Number"
+          value={formData.phone}
+          onChange={handleChange}
+          required
+          className="input-field"
+        />
+
+        <textarea
+          name="address"
+          placeholder="Address"
+          value={formData.address}
+          onChange={handleChange}
+          className="input-field"
+          rows="3"
+        />
+
+        <button type="submit" className="signup-button">
+          Sign Up
+        </button>
+      </form>
+
+      {error && <p className="error-text">{error}</p>}
+      {success && <p className="success-text">{success}</p>}
+    </div>
+  );
+};
+
+export default SignUpPage;
+////////////////////////////////////////////////////////////////////////////////////////////
+
+Style.css
+
+/* src/styles.css */
+body {
+    background-color: #f0f0f0;
+    font-family: 'Noto Sans Sinhala', sans-serif;
+  }
+  
+  button {
+    background-color: #4caf50;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+  }
+  
+  button:hover {
+    background-color: #45a049;
+  }
+  /* src/styles.css */
+textarea {
+    background-color: #f9f9f9;
+    border: 1px solid #ddd;
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  
+  textarea:focus {
+    outline: none;
+    border-color: #4caf50;
+    box-shadow: 0 0 5px rgba(76, 175, 80, 0.8);
+  }
+  
+
